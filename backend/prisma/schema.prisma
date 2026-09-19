@@ -1,0 +1,1371 @@
+// ============================================================
+// ASSETIQ — Complete Prisma Schema
+// Enterprise Asset Management + Purchase + Finance + Inventory
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "eam", "purchase", "inventory", "finance"]
+}
+
+// ════════════════════════════════════════
+// SETUP / ADMINISTRATION
+// ════════════════════════════════════════
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  displayName String
+  permissions Json     @default("[]") // array of "MODULE:ACTION"
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  users User[]
+
+  @@map("roles")
+  @@schema("public")
+}
+
+model Department {
+  id           Int      @id @default(autoincrement())
+  code         String   @unique
+  name         String
+  costCenterId Int?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
+  users      User[]
+  prHeaders  PrHeader[]
+
+  @@map("departments")
+  @@schema("public")
+}
+
+model CostCenter {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  departments  Department[]
+  equipment    Equipment[]
+  workOrders   WorkOrder[]
+  budgets      Budget[]
+  journalLines JournalLine[]
+
+  @@map("cost_centers")
+  @@schema("public")
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  employeeCode String?   @unique
+  name         String
+  email        String    @unique
+  passwordHash String
+  roleId       Int
+  departmentId Int?
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  role       Role        @relation(fields: [roleId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  @@map("users")
+  @@schema("public")
+}
+
+model ApprovalMatrix {
+  id            Int      @id @default(autoincrement())
+  module        String // PR, PO, WORK_ORDER
+  documentType  String? // ASSET, SPARE, SERVICE, AMC
+  conditionType String // AMOUNT_RANGE, BIOMEDICAL, REPLACEMENT
+  minAmount     Decimal  @default(0) @db.Decimal(18, 2)
+  maxAmount     Decimal? @db.Decimal(18, 2)
+  approverRole  String // DEPT_HEAD, FINANCE, MANAGEMENT, CFO
+  approverOrder Int
+  isMandatory   Boolean  @default(true)
+  isActive      Boolean  @default(true)
+
+  @@unique([module, documentType, conditionType, approverRole, approverOrder])
+  @@map("approval_matrix")
+  @@schema("public")
+}
+
+model ApprovalLog {
+  id             Int      @id @default(autoincrement())
+  module         String
+  documentId     Int
+  approverUserId Int
+  action         String // APPROVED, REJECTED, FORWARDED
+  stepOrder      Int
+  remarks        String?
+  actionedAt     DateTime @default(now())
+
+  @@map("approval_logs")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// EAM — EQUIPMENT & LOCATIONS
+// ════════════════════════════════════════
+
+model FunctionalLocation {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  type        String // FACILITY, BUILDING, FLOOR, DEPARTMENT, ROOM, POSITION
+  parentId    Int?
+  pathIds     Int[]    @default([])
+  pathCodes   String[] @default([])
+  level       Int      @default(0)
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  parent               FunctionalLocation?    @relation("FlocTree", fields: [parentId], references: [id])
+  children             FunctionalLocation[]   @relation("FlocTree")
+  equipment            Equipment[]
+  UtilityMeter         UtilityMeter[]
+  HousekeepingSchedule HousekeepingSchedule[]
+  WasteLog             WasteLog[]
+  IncidentReport       IncidentReport[]
+
+  @@map("functional_locations")
+  @@schema("public")
+}
+
+model EquipmentCategory {
+  id                Int      @id @default(autoincrement())
+  code              String   @unique
+  name              String
+  isBiomedical      Boolean  @default(false)
+  requiresCalib     Boolean  @default(false)
+  requiresPM        Boolean  @default(true)
+  defaultPmFreqDays Int?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  equipment Equipment[]
+
+  @@map("equipment_categories")
+  @@schema("eam")
+}
+
+model Equipment {
+  id           Int    @id @default(autoincrement())
+  code         String @unique
+  name         String
+  categoryId   Int
+  flocId       Int?
+  departmentId Int?
+  costCenterId Int?
+  fixedAssetId Int?   @unique
+  grnLineId    Int?
+  poId         Int?
+
+  serialNo      String?
+  modelNo       String?
+  manufacturer  String?
+  supplierId    Int?
+  purchaseDate  DateTime?
+  purchaseValue Decimal?  @db.Decimal(18, 2)
+
+  warrantyStartDate DateTime?
+  warrantyEndDate   DateTime?
+  installDate       DateTime?
+
+  criticality String @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
+  status      String @default("CREATED") // CREATED, INSTALLED, ACTIVE, UNDER_MAINTENANCE, BREAKDOWN, RETIRED
+  phase       String @default("PLANNED")
+
+  isBiomedical  Boolean @default(false)
+  calibRequired Boolean @default(false)
+  pmRequired    Boolean @default(true)
+
+  description String?
+  imageUrl    String?
+  qrCodeUrl   String?
+
+  riskScore Decimal? @db.Decimal(5, 2)
+  riskLevel String? // VERY_HIGH, HIGH, MEDIUM, LOW
+
+  attributes Json @default("[]")
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  category              EquipmentCategory          @relation(fields: [categoryId], references: [id])
+  floc                  FunctionalLocation?        @relation(fields: [flocId], references: [id])
+  costCenter            CostCenter?                @relation(fields: [costCenterId], references: [id])
+  fixedAsset            FixedAsset?                @relation(fields: [fixedAssetId], references: [id])
+  vendor                Vendor?                    @relation(fields: [supplierId], references: [id])
+  po                    PoHeader?                  @relation(fields: [poId], references: [id])
+  workOrders            WorkOrder[]
+  pmPlans               PmPlan[]
+  calibrations          Calibration[]
+  downtimes             EquipmentDowntime[]
+  rcmAssessments        RcmAssessment[]
+  EquipmentUsageLog     EquipmentUsageLog[]
+  assetProcurementLinks AssetProcurementLink[]
+  components            EquipmentComponent[]
+  rmas                  RmaHeader[]
+
+  @@map("equipment")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// PURCHASE — PR, PO, GRN
+// ════════════════════════════════════════
+
+model Vendor {
+  id            Int      @id @default(autoincrement())
+  code          String   @unique
+  name          String
+  contactPerson String?
+  phone         String?
+  email         String?
+  address       String?
+  taxId         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  equipment         Equipment[]
+  poHeaders         PoHeader[]
+  grnHeaders        GrnHeader[]
+  fixedAssets       FixedAsset[]
+  vendorPerformance VendorPerformance[]
+  WasteDispatch     WasteDispatch[]
+  AmcContract       AmcContract[]
+  quotations        Quotation[]
+  rmas              RmaHeader[]
+
+  @@map("vendors")
+  @@schema("purchase")
+}
+
+model PrHeader {
+  id             Int       @id @default(autoincrement())
+  prNo           String    @unique
+  sourceModule   String // EAM, INVENTORY, DEPARTMENT, PROJECT
+  sourceDocType  String? // WORK_ORDER, ASSET_REQUIREMENT, SPARE_SHORTAGE
+  sourceDocId    Int?
+  prType         String // ASSET, SPARE, SERVICE, AMC
+  requestedById  Int
+  departmentId   Int?
+  costCenterId   Int?
+  requestDate    DateTime  @default(now())
+  requiredDate   DateTime?
+  justification  String?
+  approvalStatus String    @default("DRAFT") // DRAFT, PENDING, APPROVED, REJECTED
+  prStatus       String    @default("OPEN") // OPEN, PARTIAL_PO, CONVERTED_TO_PO, CLOSED, CANCELLED
+  totalEstimated Decimal   @default(0) @db.Decimal(18, 2)
+  currentStep    Int       @default(0)
+  pendingWithRole String?  // DEPT_HEAD, FINANCE, MANAGEMENT, BIOMEDICAL_HEAD, FACILITY_MANAGER, CFO, PURCHASE
+  isBudgetAvailable Boolean @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  lines      PrLine[]
+  poLines    PoLine[]
+  approvals  PrApprovalLog[]
+  rfqs       RfqHeader[]
+
+  @@map("pr_headers")
+  @@schema("purchase")
+}
+
+model RfqHeader {
+  id          Int      @id @default(autoincrement())
+  rfqNo       String   @unique
+  prId        Int
+  status      String   @default("OPEN") // OPEN, EVALUATING, CLOSED
+  dueDate     DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  pr          PrHeader @relation(fields: [prId], references: [id])
+  quotations  Quotation[]
+
+  @@map("rfq_headers")
+  @@schema("purchase")
+}
+
+model Quotation {
+  id              Int      @id @default(autoincrement())
+  rfqId           Int
+  vendorId        Int
+  totalAmount     Decimal  @db.Decimal(18, 2)
+  techCompliance  Boolean  @default(false)
+  warrantyYears   Int      @default(0)
+  deliveryDays    Int      @default(0)
+  amcSupport      Boolean  @default(false)
+  complianceScore Int      @default(0)
+  serviceScore    Int      @default(0)
+  isSelected      Boolean  @default(false)
+  evaluationNotes String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  rfq    RfqHeader @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  vendor Vendor    @relation(fields: [vendorId], references: [id])
+
+  @@map("quotations")
+  @@schema("purchase")
+}
+
+model PrApprovalLog {
+  id           Int      @id @default(autoincrement())
+  prId         Int
+  approverId   Int
+  approverRole String
+  status       String   // APPROVED, REJECTED
+  comments     String?
+  createdAt    DateTime @default(now())
+
+  pr PrHeader @relation(fields: [prId], references: [id], onDelete: Cascade)
+
+  @@map("pr_approval_logs")
+  @@schema("purchase")
+}
+
+model PrLine {
+  id                 Int     @id @default(autoincrement())
+  prId               Int
+  lineNo             Int
+  itemType           String // ASSET, INVENTORY_ITEM, SERVICE
+  itemId             Int?
+  itemDescription    String
+  quantity           Decimal @db.Decimal(18, 4)
+  uomCode            String?
+  estimatedUnitPrice Decimal @default(0) @db.Decimal(18, 4)
+  assetClassCode     String?
+  workOrderId        Int?
+  equipmentId        Int?
+  lineStatus         String  @default("OPEN") // OPEN, PARTIAL_PO, CONVERTED, CANCELLED
+
+  pr PrHeader @relation(fields: [prId], references: [id], onDelete: Cascade)
+
+  @@map("pr_lines")
+  @@schema("purchase")
+}
+
+model PoHeader {
+  id                   Int       @id @default(autoincrement())
+  poNo                 String    @unique
+  vendorId             Int
+  poType               String // ASSET, SPARE, SERVICE, AMC
+  poDate               DateTime  @default(now())
+  expectedDeliveryDate DateTime?
+  paymentTerms         String?
+  deliveryLocationId   Int?
+  currencyCode         String    @default("BDT")
+  exchangeRate         Decimal   @default(1) @db.Decimal(18, 6)
+  approvalStatus       String    @default("DRAFT")
+  poStatus             String    @default("OPEN")
+  totalAmount          Decimal   @default(0) @db.Decimal(18, 2)
+  warrantyTerms        String?
+  amcTerms             String?
+  notes                String?
+  createdById          Int?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  vendor      Vendor       @relation(fields: [vendorId], references: [id])
+  lines       PoLine[]
+  grnHeaders  GrnHeader[]
+  fixedAssets FixedAsset[]
+  equipment   Equipment[]
+
+  @@map("po_headers")
+  @@schema("purchase")
+}
+
+model PoLine {
+  id              Int     @id @default(autoincrement())
+  poId            Int
+  prLineId        Int?
+  lineNo          Int
+  itemType        String
+  itemId          Int?
+  itemDescription String
+  orderedQty      Decimal @db.Decimal(18, 4)
+  receivedQty     Decimal @default(0) @db.Decimal(18, 4)
+  acceptedQty     Decimal @default(0) @db.Decimal(18, 4)
+  rejectedQty     Decimal @default(0) @db.Decimal(18, 4)
+  uomCode         String?
+  unitPrice       Decimal @db.Decimal(18, 4)
+  taxAmount       Decimal @default(0) @db.Decimal(18, 2)
+  discountAmount  Decimal @default(0) @db.Decimal(18, 2)
+  assetClassCode  String?
+  costCenterId    Int?
+  lineStatus      String  @default("OPEN")
+
+  po       PoHeader  @relation(fields: [poId], references: [id], onDelete: Cascade)
+  prHeader PrHeader? @relation(fields: [prLineId], references: [id])
+  grnLines GrnLine[]
+
+  @@map("po_lines")
+  @@schema("purchase")
+}
+
+model GrnHeader {
+  id                 Int      @id @default(autoincrement())
+  grnNo              String   @unique
+  poId               Int
+  vendorId           Int
+  receivedDate       DateTime @default(now())
+  receivedById       Int?
+  grnType            String // ASSET, INVENTORY, SERVICE
+  inspectionRequired Boolean  @default(true)
+  grnStatus          String   @default("DRAFT")
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  po     PoHeader  @relation(fields: [poId], references: [id])
+  vendor Vendor    @relation(fields: [vendorId], references: [id])
+  lines  GrnLine[]
+
+  @@map("grn_headers")
+  @@schema("purchase")
+}
+
+model GrnLine {
+  id                Int       @id @default(autoincrement())
+  grnId             Int
+  poLineId          Int?
+  itemType          String
+  itemId            Int?
+  itemDescription   String
+  receivedQty       Decimal   @db.Decimal(18, 4)
+  acceptedQty       Decimal   @default(0) @db.Decimal(18, 4)
+  rejectedQty       Decimal   @default(0) @db.Decimal(18, 4)
+  unitPrice         Decimal?  @db.Decimal(18, 4)
+  serialNo          String?
+  modelNo           String?
+  manufacturer      String?
+  warrantyStartDate DateTime?
+  warrantyEndDate   DateTime?
+  batchNo           String?
+  inspectionStatus  String    @default("PENDING") // PENDING, PASSED, FAILED, HOLD
+  remarks           String?
+  createdAt         DateTime  @default(now())
+
+  grn        GrnHeader      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  poLine     PoLine?        @relation(fields: [poLineId], references: [id])
+  inspection GrnInspection?
+  fixedAsset FixedAsset?
+
+  @@map("grn_lines")
+  @@schema("purchase")
+}
+
+model GrnInspection {
+  id                   Int      @id @default(autoincrement())
+  grnLineId            Int      @unique
+  inspectionType       String // BIOMEDICAL, TECHNICAL, STORE, SAFETY
+  inspectedById        Int?
+  inspectionDate       DateTime @default(now())
+  result               String // PASSED, FAILED, HOLD
+  physicalConditionOk  Boolean  @default(false)
+  specificationMatched Boolean  @default(false)
+  accessoriesComplete  Boolean  @default(false)
+  warrantyDocReceived  Boolean  @default(false)
+  calibCertReceived    Boolean  @default(false)
+  installationRequired Boolean  @default(true)
+  safetyCheckPassed    Boolean  @default(false)
+  remarks              String?
+
+  grnLine GrnLine @relation(fields: [grnLineId], references: [id], onDelete: Cascade)
+
+  @@map("grn_inspections")
+  @@schema("purchase")
+}
+
+model VendorPerformance {
+  id            Int      @id @default(autoincrement())
+  vendorId      Int
+  poId          Int?
+  grnId         Int?
+  deliveryScore Int      @default(3) // 1-5
+  qualityScore  Int      @default(3)
+  priceScore    Int      @default(3)
+  serviceScore  Int      @default(3)
+  remarks       String?
+  evaluatedById Int?
+  evaluatedAt   DateTime @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@map("vendor_performance")
+  @@schema("purchase")
+}
+
+// ════════════════════════════════════════
+// INVENTORY — ITEMS & STOCK
+// ════════════════════════════════════════
+
+model Item {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  description String?
+  category    String // SPARE_PART, CONSUMABLE, TOOL
+  uomCode     String   @default("PCS")
+  unitCost    Decimal  @default(0) @db.Decimal(18, 4)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  stockBalances  StockBalance[]
+  stockMovements StockMovement[]
+  stockPolicies  StockPolicy[]
+  woMaterials    WoMaterial[]
+  equipmentComponents EquipmentComponent[]
+  rmaLines       RmaLine[]
+
+  @@map("items")
+  @@schema("inventory")
+}
+
+model StockLocation {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  type      String // MAIN_STORE, BIOMEDICAL_STORE, OT_STORE
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  stockBalances  StockBalance[]
+  stockMovements StockMovement[]
+  stockPolicies  StockPolicy[]
+
+  @@map("stock_locations")
+  @@schema("public")
+}
+
+model StockBalance {
+  id           Int     @id @default(autoincrement())
+  itemId       Int
+  locationId   Int
+  qtyOnHand    Decimal @default(0) @db.Decimal(18, 4)
+  reservedQty  Decimal @default(0) @db.Decimal(18, 4)
+  availableQty Decimal @default(0) @db.Decimal(18, 4) // computed: onHand - reserved
+
+  item     Item          @relation(fields: [itemId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+
+  @@unique([itemId, locationId])
+  @@map("stock_balances")
+  @@schema("inventory")
+}
+
+model StockMovement {
+  id         Int      @id @default(autoincrement())
+  itemId     Int
+  locationId Int
+  movType    String // GRN_RECEIPT, WO_ISSUE, WO_RETURN, ADJUSTMENT
+  qty        Decimal  @db.Decimal(18, 4)
+  unitCost   Decimal  @db.Decimal(18, 4)
+  refDocType String?
+  refDocId   Int?
+  movedById  Int?
+  movedAt    DateTime @default(now())
+  remarks    String?
+
+  item     Item          @relation(fields: [itemId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+
+  @@map("stock_movements")
+  @@schema("inventory")
+}
+
+model StockPolicy {
+  id         Int     @id @default(autoincrement())
+  itemId     Int
+  locationId Int
+  minQty     Decimal @db.Decimal(18, 4)
+  maxQty     Decimal @db.Decimal(18, 4)
+  reorderQty Decimal @db.Decimal(18, 4)
+  autoPr     Boolean @default(true)
+
+  item     Item          @relation(fields: [itemId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+
+  @@unique([itemId, locationId])
+  @@map("stock_policies")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// FINANCE — FIXED ASSET, JOURNALS
+// ════════════════════════════════════════
+
+model ChartOfAccounts {
+  id            Int     @id @default(autoincrement())
+  glCode        String  @unique
+  glName        String
+  accountType   String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  normalBalance String // DEBIT, CREDIT
+  isControlAcc  Boolean @default(false)
+  isActive      Boolean @default(true)
+
+  journalLines JournalLine[]
+  debitRules   PostingRule[] @relation("DebitRule")
+  creditRules  PostingRule[] @relation("CreditRule")
+
+  @@map("chart_of_accounts")
+  @@schema("public")
+}
+
+model AssetClass {
+  id                        Int     @id @default(autoincrement())
+  code                      String  @unique
+  name                      String
+  assetGlCode               String
+  accumDepreciationGlCode   String
+  depreciationExpenseGlCode String
+  defaultUsefulLifeMonths   Int
+  depreciationMethod        String  @default("STRAIGHT_LINE")
+  isActive                  Boolean @default(true)
+
+  fixedAssets FixedAsset[]
+
+  @@map("asset_classes")
+  @@schema("finance")
+}
+
+model FixedAsset {
+  id                 Int       @id @default(autoincrement())
+  faNo               String    @unique
+  assetClassId       Int
+  assetName          String
+  acquisitionDate    DateTime
+  capitalizationDate DateTime
+  acquisitionValue   Decimal   @db.Decimal(18, 2)
+  salvageValue       Decimal   @default(0) @db.Decimal(18, 2)
+  usefulLifeMonths   Int
+  depreciationMethod String    @default("STRAIGHT_LINE")
+  accumulatedDeprn   Decimal   @default(0) @db.Decimal(18, 2)
+  bookValue          Decimal   @db.Decimal(18, 2)
+  vendorId           Int?
+  poId               Int?
+  grnId              Int?
+  grnLineId          Int?      @unique
+  departmentId       Int?
+  costCenterId       Int?
+  locationId         Int?
+  assetStatus        String    @default("CAPITALIZED")
+  retiredAt          DateTime?
+  disposalValue      Decimal?  @db.Decimal(18, 2)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  assetClass    AssetClass             @relation(fields: [assetClassId], references: [id])
+  vendor        Vendor?                @relation(fields: [vendorId], references: [id])
+  grnLine       GrnLine?               @relation(fields: [grnLineId], references: [id])
+  po            PoHeader?              @relation(fields: [poId], references: [id])
+  equipment     Equipment?
+  deprnSchedule DepreciationSchedule[]
+  journalLines  JournalLine[]
+
+  @@map("fixed_assets")
+  @@schema("finance")
+}
+
+model DepreciationSchedule {
+  id               Int       @id @default(autoincrement())
+  fixedAssetId     Int
+  fiscalYear       Int
+  fiscalMonth      Int // 1-12
+  openingBookValue Decimal   @db.Decimal(18, 2)
+  deprnAmount      Decimal   @db.Decimal(18, 2)
+  closingBookValue Decimal   @db.Decimal(18, 2)
+  journalId        Int?
+  runStatus        String    @default("PENDING") // PENDING, POSTED, REVERSED
+  runDate          DateTime?
+
+  fixedAsset FixedAsset @relation(fields: [fixedAssetId], references: [id])
+
+  @@unique([fixedAssetId, fiscalYear, fiscalMonth])
+  @@map("depreciation_schedules")
+  @@schema("finance")
+}
+
+model JournalHeader {
+  id            Int      @id @default(autoincrement())
+  journalNo     String   @unique
+  sourceModule  String // PURCHASE, INVENTORY, EAM, FIXED_ASSET, AP
+  sourceDocType String
+  sourceDocId   Int
+  postingDate   DateTime @default(now())
+  narration     String?
+  totalDebit    Decimal  @default(0) @db.Decimal(18, 2)
+  totalCredit   Decimal  @default(0) @db.Decimal(18, 2)
+  postingStatus String   @default("DRAFT") // DRAFT, POSTED, FAILED, REVERSED
+  createdById   Int?
+  createdAt     DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@map("journal_headers")
+  @@schema("finance")
+}
+
+model JournalLine {
+  id           Int     @id @default(autoincrement())
+  journalId    Int
+  lineNo       Int
+  glCode       String
+  debitAmount  Decimal @default(0) @db.Decimal(18, 2)
+  creditAmount Decimal @default(0) @db.Decimal(18, 2)
+  costCenterId Int?
+  fixedAssetId Int?
+  workOrderId  Int?
+  narration    String?
+
+  journal    JournalHeader    @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  glAccount  ChartOfAccounts? @relation(fields: [glCode], references: [glCode])
+  costCenter CostCenter?      @relation(fields: [costCenterId], references: [id])
+  fixedAsset FixedAsset?      @relation(fields: [fixedAssetId], references: [id])
+  workOrder  WorkOrder?       @relation(fields: [workOrderId], references: [id])
+
+  @@map("journal_lines")
+  @@schema("finance")
+}
+
+model PostingRule {
+  id               Int     @id @default(autoincrement())
+  sourceModule     String
+  transactionType  String
+  assetClassId     Int?
+  itemType         String?
+  orderType        String?
+  debitGlCode      String
+  creditGlCode     String
+  autoPost         Boolean @default(true)
+  approvalRequired Boolean @default(false)
+  isActive         Boolean @default(true)
+
+  debitGl  ChartOfAccounts @relation("DebitRule", fields: [debitGlCode], references: [glCode])
+  creditGl ChartOfAccounts @relation("CreditRule", fields: [creditGlCode], references: [glCode])
+
+  @@unique([sourceModule, transactionType, assetClassId, itemType, orderType])
+  @@map("posting_rules")
+  @@schema("public")
+}
+
+model Budget {
+  id              Int     @id @default(autoincrement())
+  fiscalYear      Int
+  budgetType      String // CAPEX, OPEX
+  costCenterId    Int
+  glCode          String?
+  budgetedAmount  Decimal @db.Decimal(18, 2)
+  utilizedAmount  Decimal @default(0) @db.Decimal(18, 2)
+  committedAmount Decimal @default(0) @db.Decimal(18, 2)
+  // availableAmount = budgeted - utilized - committed (computed in app)
+
+  costCenter CostCenter @relation(fields: [costCenterId], references: [id])
+
+  @@unique([fiscalYear, budgetType, costCenterId, glCode])
+  @@map("budgets")
+  @@schema("finance")
+}
+
+model ExchangeRate {
+  id           Int      @id @default(autoincrement())
+  fromCurrency String
+  toCurrency   String   @default("BDT")
+  rateDate     DateTime @db.Date
+  buyRate      Decimal  @db.Decimal(18, 6)
+  sellRate     Decimal  @db.Decimal(18, 6)
+  source       String? // BANGLADESH_BANK, MANUAL
+
+  @@unique([fromCurrency, toCurrency, rateDate])
+  @@map("exchange_rates")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// EAM — WORK ORDERS & MAINTENANCE
+// ════════════════════════════════════════
+
+model WorkOrder {
+  id             Int       @id @default(autoincrement())
+  woNo           String    @unique
+  orderType      String // PREVENTIVE, CORRECTIVE, PREDICTIVE, INSPECTION, COMMISSIONING, EMERGENCY
+  equipmentId    Int
+  flocId         Int?
+  departmentId   Int?
+  costCenterId   Int?
+  priority       String    @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
+  status         String    @default("CREATED") // CREATED, ASSIGNED, IN_PROGRESS, COMPLETED, VERIFIED, CLOSED, CANCELLED
+  assignedToId   Int?
+  plannedDate    DateTime?
+  dueDate        DateTime?
+  startDate      DateTime?
+  completedDate  DateTime?
+  closedDate     DateTime?
+  estimatedHours Decimal?  @db.Decimal(8, 2)
+  actualHours    Decimal?  @db.Decimal(8, 2)
+  problemDesc    String?
+  causeCode      String? // e.g. BREAKAGE, CRACK, LEAK, BEARING_DAMAGE
+  resolution     String?
+  pmPlanId       Int?
+  parentWoId     Int?
+  checklist      Json      @default("[]")
+  createdById    Int?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  equipment    Equipment          @relation(fields: [equipmentId], references: [id])
+  costCenter   CostCenter?        @relation(fields: [costCenterId], references: [id])
+  pmPlan       PmPlan?            @relation(fields: [pmPlanId], references: [id])
+  labor        WoLabor[]
+  materials    WoMaterial[]
+  services     WoService[]
+  costSummary  WoCostSummary?
+  downtime     EquipmentDowntime?
+  journalLines JournalLine[]
+  assetProcurementLinks AssetProcurementLink[]
+  equipmentComponents EquipmentComponent[]
+  rmas RmaHeader[]
+
+  @@map("work_orders")
+  @@schema("eam")
+}
+
+model WoLabor {
+  id           Int      @id @default(autoincrement())
+  workOrderId  Int
+  employeeId   Int?
+  employeeName String?
+  craftType    String? // TECHNICIAN, ENGINEER, HELPER
+  hoursWorked  Decimal  @db.Decimal(8, 2)
+  hourlyRate   Decimal  @db.Decimal(18, 4)
+  laborCost    Decimal  @db.Decimal(18, 2)
+  workDate     DateTime @db.Date
+  remarks      String?
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@map("wo_labor")
+  @@schema("eam")
+}
+
+model WoMaterial {
+  id          Int       @id @default(autoincrement())
+  workOrderId Int
+  itemId      Int
+  requiredQty Decimal   @db.Decimal(18, 4)
+  issuedQty   Decimal   @default(0) @db.Decimal(18, 4)
+  returnedQty Decimal   @default(0) @db.Decimal(18, 4)
+  unitCost    Decimal   @db.Decimal(18, 4)
+  totalCost   Decimal   @db.Decimal(18, 2)
+  lineStatus  String    @default("PLANNED") // PLANNED, RESERVED, ISSUED, RETURNED
+  locationId  Int?
+  issuedById  Int?
+  issuedAt    DateTime?
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  item      Item      @relation(fields: [itemId], references: [id])
+
+  @@map("wo_materials")
+  @@schema("eam")
+}
+
+model WoService {
+  id                 Int       @id @default(autoincrement())
+  workOrderId        Int
+  vendorId           Int?
+  serviceDescription String
+  serviceAmount      Decimal   @db.Decimal(18, 2)
+  currency           String    @default("BDT")
+  serviceEntryStatus String    @default("PENDING") // PENDING, VERIFIED, INVOICED
+  serviceDate        DateTime?
+  verifiedById       Int?
+  remarks            String?
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@map("wo_services")
+  @@schema("eam")
+}
+
+model WoCostSummary {
+  id           Int      @id @default(autoincrement())
+  workOrderId  Int      @unique
+  laborCost    Decimal  @default(0) @db.Decimal(18, 2)
+  materialCost Decimal  @default(0) @db.Decimal(18, 2)
+  serviceCost  Decimal  @default(0) @db.Decimal(18, 2)
+  otherCost    Decimal  @default(0) @db.Decimal(18, 2)
+  totalCost    Decimal  @default(0) @db.Decimal(18, 2)
+  calculatedAt DateTime @default(now())
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+
+  @@map("wo_cost_summaries")
+  @@schema("eam")
+}
+
+model EquipmentDowntime {
+  id              Int       @id @default(autoincrement())
+  equipmentId     Int
+  workOrderId     Int       @unique
+  downtimeStart   DateTime
+  downtimeEnd     DateTime?
+  downtimeHours   Decimal?  @db.Decimal(10, 2)
+  downtimeReason  String?
+  financialImpact Decimal?  @db.Decimal(18, 2)
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+
+  @@map("equipment_downtimes")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// PM PLANS
+// ════════════════════════════════════════
+
+model PmPlan {
+  id                Int       @id @default(autoincrement())
+  equipmentId       Int
+  planName          String
+  orderType         String    @default("PREVENTIVE")
+  frequencyType     String // CALENDAR_DAYS, CALENDAR_MONTHS, OPERATING_HOURS
+  frequencyValue    Int
+  calibFreqMonths   Int?
+  checklist         Json      @default("[]")
+  responsibleTeam   String?
+  advanceCreateDays Int       @default(7)
+  nextDueDate       DateTime?
+  lastCreatedDate   DateTime?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+
+  equipment  Equipment   @relation(fields: [equipmentId], references: [id])
+  workOrders WorkOrder[]
+
+  @@map("pm_plans")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// CALIBRATION
+// ════════════════════════════════════════
+
+model Calibration {
+  id              Int       @id @default(autoincrement())
+  equipmentId     Int
+  calibrationType String // INTERNAL, EXTERNAL, REGULATORY
+  standardRef     String? // ISO/IEC 17025
+  dueDate         DateTime
+  performedDate   DateTime?
+  performedBy     String?
+  result          String? // PASSED, FAILED, CONDITIONAL
+  certificateNo   String?
+  certificateUrl  String?
+  nextDueDate     DateTime?
+  workOrderId     Int?
+  createdAt       DateTime  @default(now())
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@map("calibrations")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// RCM ASSESSMENT
+// ════════════════════════════════════════
+
+model RcmAssessment {
+  id           Int      @id @default(autoincrement())
+  assessmentNo String   @unique
+  equipmentId  Int
+  title        String
+  status       String   @default("DRAFT") // DRAFT, IN_PROCESS, COMPLETED, APPROVED
+  hierarchy    Json     @default("[]")
+  assignedTo   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@map("rcm_assessments")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// PROCUREMENT LIFECYCLE LINK (Traceability)
+// ════════════════════════════════════════
+
+model AssetProcurementLink {
+  id              Int      @id @default(autoincrement())
+  prId            Int?
+  prNo            String?
+  poId            Int?
+  poNo            String?
+  grnId           Int?
+  grnNo           String?
+  fixedAssetId    Int?
+  fixedAssetNo    String?
+  equipmentId     Int?
+  workOrderId     Int?
+  sourceType      String?  // NEW_ASSET, REPLACEMENT, SPARE_FOR_WO, SERVICE_FOR_WO, AMC
+  linkStatus      String   @default("ACTIVE")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  equipment Equipment? @relation(fields: [equipmentId], references: [id])
+  workOrder WorkOrder? @relation(fields: [workOrderId], references: [id])
+
+  @@map("eam_asset_procurement_link")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// NOTIFICATIONS
+// ════════════════════════════════════════
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  type      String // ALERT, INFO, SUCCESS, WARNING
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// AUDIT LOG
+// ════════════════════════════════════════
+
+model ActivityLog {
+  id         Int      @id @default(autoincrement())
+  tableName  String
+  entityType String?  // Human-readable: WorkOrder, Equipment, FixedAsset
+  recordId   Int
+  action     String   // CREATE, UPDATE, DELETE, STATUS_CHANGE
+  changedBy  Int?
+  userName   String?  // Denormalized user name for quick display
+  changedAt  DateTime @default(now())
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  module     String?  // MAINTENANCE, PURCHASE, FINANCE, INVENTORY
+
+  @@index([tableName, recordId])
+  @@index([changedBy])
+  @@index([module])
+  @@map("activity_logs")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// HFM — UTILITIES MONITORING
+// ════════════════════════════════════════
+
+model UtilityMeter {
+  id            Int      @id @default(autoincrement())
+  meterNo       String   @unique
+  utilityType   String // ELECTRICITY, WATER, MEDICAL_OXYGEN, MEDICAL_AIR, HVAC_CHILLED_WATER
+  locationId    Int
+  unitOfMeasure String // KWH, LITERS, CUBIC_METERS, HOURS
+  multiplier    Decimal  @default(1) @db.Decimal(10, 4)
+  minThreshold  Decimal? @db.Decimal(18, 4)
+  maxThreshold  Decimal? @db.Decimal(18, 4)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  location FunctionalLocation @relation(fields: [locationId], references: [id])
+  readings UtilityReading[]
+
+  @@map("utility_meters")
+  @@schema("eam")
+}
+
+model UtilityReading {
+  id           Int      @id @default(autoincrement())
+  meterId      Int
+  readingDate  DateTime @db.Date
+  readingValue Decimal  @db.Decimal(18, 4)
+  consumption  Decimal  @db.Decimal(18, 4) // Computed from previous reading
+  alertFlag    Boolean  @default(false)
+  recordedById Int?
+  createdAt    DateTime @default(now())
+
+  meter UtilityMeter @relation(fields: [meterId], references: [id])
+
+  @@unique([meterId, readingDate])
+  @@map("utility_readings")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// HFM — HOUSEKEEPING
+// ════════════════════════════════════════
+
+model HousekeepingSchedule {
+  id           Int      @id @default(autoincrement())
+  locationId   Int
+  taskName     String
+  cleaningType String   @default("ROUTINE") // ROUTINE, DEEP, ISOLATION
+  frequency    String // DAILY, TWICE_DAILY, WEEKLY
+  assignedTeam String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  location FunctionalLocation @relation(fields: [locationId], references: [id])
+  logs     HousekeepingLog[]
+
+  @@map("housekeeping_schedules")
+  @@schema("eam")
+}
+
+model HousekeepingLog {
+  id             Int      @id @default(autoincrement())
+  scheduleId     Int
+  executedAt     DateTime @default(now())
+  executedById   Int?
+  status         String // COMPLETED, SKIPPED, DELAYED
+  supervisorSign Boolean  @default(false)
+  infectionFlag  Boolean  @default(false)
+  remarks        String?
+
+  schedule HousekeepingSchedule @relation(fields: [scheduleId], references: [id])
+
+  @@map("housekeeping_logs")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// HFM — WASTE MANAGEMENT
+// ════════════════════════════════════════
+
+model WasteCategory {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique // RED_BAG, YELLOW_BAG, SHARPS, GENERAL
+  name        String
+  colorCode   String?
+  handlingIns String?
+  isActive    Boolean @default(true)
+
+  wasteLogs WasteLog[]
+
+  @@map("waste_categories")
+  @@schema("public")
+}
+
+model WasteLog {
+  id         Int      @id @default(autoincrement())
+  categoryId Int
+  locationId Int
+  weightKg   Decimal  @db.Decimal(10, 2)
+  loggedAt   DateTime @default(now())
+  loggedById Int?
+  dispatchId Int?
+
+  category WasteCategory      @relation(fields: [categoryId], references: [id])
+  location FunctionalLocation @relation(fields: [locationId], references: [id])
+  dispatch WasteDispatch?     @relation(fields: [dispatchId], references: [id])
+
+  @@map("waste_logs")
+  @@schema("eam")
+}
+
+model WasteDispatch {
+  id            Int      @id @default(autoincrement())
+  dispatchNo    String   @unique
+  vendorId      Int
+  dispatchDate  DateTime @default(now())
+  totalWeight   Decimal  @db.Decimal(18, 2)
+  certificateNo String?
+  manifestUrl   String?
+  status        String   @default("DISPATCHED") // DISPATCHED, RECEIVED_BY_VENDOR, CERTIFIED
+
+  vendor    Vendor     @relation(fields: [vendorId], references: [id])
+  wasteLogs WasteLog[]
+
+  @@map("waste_dispatches")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// HFM — COMPLIANCE & AMC
+// ════════════════════════════════════════
+
+model ComplianceAudit {
+  id          Int      @id @default(autoincrement())
+  auditType   String // NABH, ISO_9001, FIRE_SAFETY
+  auditDate   DateTime @db.Date
+  auditorName String
+  score       Decimal? @db.Decimal(5, 2)
+  status      String   @default("PLANNED") // PLANNED, IN_PROGRESS, COMPLETED
+  remarks     String?
+  createdAt   DateTime @default(now())
+
+  findings AuditFinding[]
+
+  @@map("compliance_audits")
+  @@schema("public")
+}
+
+model AuditFinding {
+  id          Int       @id @default(autoincrement())
+  auditId     Int
+  description String
+  severity    String // CRITICAL, MAJOR, MINOR, OBSERVATION
+  status      String    @default("OPEN") // OPEN, IN_PROGRESS, CLOSED
+  dueDate     DateTime?
+  closedAt    DateTime?
+  actionTaken String?
+
+  audit ComplianceAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@map("audit_findings")
+  @@schema("public")
+}
+
+model AmcContract {
+  id           Int      @id @default(autoincrement())
+  contractNo   String   @unique
+  vendorId     Int
+  title        String
+  contractType String   @default("AMC") // AMC, CMC
+  startDate    DateTime @db.Date
+  endDate      DateTime @db.Date
+  value        Decimal  @db.Decimal(18, 2)
+  status       String   @default("ACTIVE") // ACTIVE, EXPIRED, RENEWED, CANCELLED
+  terms        String?
+  slaTerms     String?
+  createdAt    DateTime @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@map("amc_contracts")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// CLINICAL LOGS & INCIDENTS
+// ════════════════════════════════════════
+
+model EquipmentUsageLog {
+  id          Int       @id @default(autoincrement())
+  equipmentId Int
+  patientId   String? // Optional reference to HIS patient ID
+  usageStart  DateTime
+  usageEnd    DateTime?
+  usageHours  Decimal?  @db.Decimal(10, 2)
+  loggedById  Int?
+  remarks     String?
+  createdAt   DateTime  @default(now())
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@map("equipment_usage_logs")
+  @@schema("eam")
+}
+
+model IncidentReport {
+  id           Int       @id @default(autoincrement())
+  incidentNo   String    @unique
+  incidentType String // INFECTION_SPILL, EQUIPMENT_FAILURE, SAFETY_HAZARD
+  locationId   Int
+  reportedById Int?
+  reportedAt   DateTime  @default(now())
+  description  String
+  severity     String // CRITICAL, HIGH, MEDIUM, LOW
+  status       String    @default("OPEN") // OPEN, INVESTIGATING, RESOLVED
+  resolution   String?
+  resolvedAt   DateTime?
+
+  location FunctionalLocation @relation(fields: [locationId], references: [id])
+
+  @@map("incident_reports")
+  @@schema("public")
+}
+
+// ════════════════════════════════════════
+// ASSET BOM / COMPONENTS
+// ════════════════════════════════════════
+model EquipmentComponent {
+  id              Int       @id @default(autoincrement())
+  equipmentId     Int
+  itemId          Int
+  serialNo        String?
+  installedAt     DateTime  @default(now())
+  installedById   Int?
+  removedAt       DateTime?
+  status          String    @default("ACTIVE") // ACTIVE, REMOVED, FAULTY
+  workOrderId     Int?
+  warrantyEndDate DateTime?
+
+  equipment       Equipment  @relation(fields: [equipmentId], references: [id])
+  item            Item       @relation(fields: [itemId], references: [id])
+  workOrder       WorkOrder? @relation(fields: [workOrderId], references: [id])
+
+  @@map("equipment_components")
+  @@schema("eam")
+}
+
+// ════════════════════════════════════════
+// RMA / WARRANTY RETURN
+// ════════════════════════════════════════
+model RmaHeader {
+  id              Int       @id @default(autoincrement())
+  rmaNo           String    @unique
+  vendorId        Int
+  equipmentId     Int?
+  workOrderId     Int?
+  status          String    @default("DRAFT") // DRAFT, SHIPPED_TO_VENDOR, RECEIVED_REPLACEMENT, CLOSED
+  createdAt       DateTime  @default(now())
+  createdById     Int?
+  notes           String?
+  
+  vendor          Vendor     @relation(fields: [vendorId], references: [id])
+  equipment       Equipment? @relation(fields: [equipmentId], references: [id])
+  workOrder       WorkOrder? @relation(fields: [workOrderId], references: [id])
+  lines           RmaLine[]
+
+  @@map("rma_headers")
+  @@schema("purchase")
+}
+
+model RmaLine {
+  id               Int       @id @default(autoincrement())
+  rmaId            Int
+  itemId           Int
+  faultySerialNo   String?
+  replacementSerialNo String?
+  qty              Decimal   @default(1) @db.Decimal(18,4)
+  lineStatus       String    @default("PENDING") // PENDING, REPLACED, REJECTED
+  
+  rma              RmaHeader @relation(fields: [rmaId], references: [id], onDelete: Cascade)
+  item             Item      @relation(fields: [itemId], references: [id])
+
+  @@map("rma_lines")
+  @@schema("purchase")
+}

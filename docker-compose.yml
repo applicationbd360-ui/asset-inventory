@@ -1,0 +1,91 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL Database ───────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: assetiq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: assetiq
+      POSTGRES_USER: assetiq_user
+      POSTGRES_PASSWORD: assetiq_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assetiq_user -d assetiq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis Cache ───────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: assetiq-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend API ───────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: assetiq-backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://assetiq_user:assetiq_pass@postgres:5432/assetiq?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: assetiq-access-secret-change-in-prod
+      JWT_REFRESH_SECRET: assetiq-refresh-secret-change-in-prod
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      FRONTEND_URL: http://localhost:3000
+      COMPANY_NAME: "Hospital Asset Management"
+      CURRENCY: BDT
+    volumes:
+      - ./backend/uploads:/app/uploads
+    networks:
+      - assetiq-network
+
+  # ── Frontend ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: assetiq-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:4000/api/v1
+    networks:
+      - assetiq-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  assetiq-network:
+    driver: bridge

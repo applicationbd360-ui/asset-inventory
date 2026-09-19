@@ -1,0 +1,150 @@
+.forecast-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  animation: fadeIn 0.4s ease-out;
+}
+
+/* Insights Panel */
+.insights-panel {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.insight-card {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.insight-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  border-color: var(--color-primary);
+}
+
+.insight-icon {
+  padding: 10px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.insight-icon.warning {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.insight-icon.info {
+  background: rgba(14, 165, 233, 0.1);
+  color: #0ea5e9;
+}
+
+.insight-content h4 {
+  margin: 0 0 var(--space-1) 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.insight-content p {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+/* Heatmap Grid */
+.heatmap-table-container {
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-1);
+}
+
+.heatmap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.heatmap-table th,
+.heatmap-table td {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.heatmap-table th {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: center;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.heatmap-table th.col-pinned {
+  position: sticky;
+  left: 0;
+  z-index: 20;
+  text-align: left;
+}
+
+.heatmap-table td.col-pinned {
+  position: sticky;
+  left: 0;
+  background: var(--surface-1);
+  z-index: 5;
+  font-weight: 500;
+}
+
+.row-group-header {
+  background: rgba(255, 255, 255, 0.03);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.metric-label {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+/* Heatmap Colors */
+.heatmap-cell {
+  text-align: center;
+  font-weight: 500;
+  transition: background 0.3s ease;
+}
+
+.heatmap-cell.danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.heatmap-cell.warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+}
+
+.heatmap-cell.safe {
+  color: var(--text-secondary);
+}
+
+/* Chart Container */
+.chart-container {
+  height: 400px;
+  width: 100%;
+  margin-top: var(--space-4);
+}
